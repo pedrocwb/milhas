@@ -1,61 +1,28 @@
-import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
-import { formatCurrency, formatNumber, formatDate, calculateCPM } from '@/lib/utils'
+import { formatCurrency, formatNumber, calculateCPM } from '@/lib/utils'
 import { redirect } from 'next/navigation'
-
-async function getPurchasesData(organizationId: string) {
-  const supabase = await createClient()
-
-  const { data: purchases } = await supabase
-    .from('purchases')
-    .select(`
-      *,
-      managed_accounts (
-        name
-      ),
-      loyalty_programs (
-        program_type
-      ),
-      credit_cards (
-        name
-      )
-    `)
-    .eq('organization_id', organizationId)
-    .order('purchase_date', { ascending: false })
-    .limit(50)
-
-  return purchases || []
-}
-
-const programColors: Record<string, string> = {
-  LATAM: 'bg-red-100 text-red-800',
-  AZUL: 'bg-blue-100 text-blue-800',
-  SMILES: 'bg-yellow-100 text-yellow-800',
-  LIVELO: 'bg-purple-100 text-purple-800',
-}
+import { authService, accountsService, programsService, purchasesService, cardsService } from '@/lib/services'
+import { AddPurchaseDialog } from './components/add-purchase-dialog'
+import { PurchasesTable } from './components/purchases-table'
 
 export default async function PurchasesPage() {
-  const supabase = await createClient()
+  const userId = await authService.getUserId()
   
-  const { data: { user } } = await supabase.auth.getUser()
-  
-  if (!user) {
+  if (!userId) {
     redirect('/login')
   }
 
-  const { data: org } = await supabase
-    .from('organizations')
-    .select('*')
-    .eq('owner_id', user.id)
-    .single()
-
-  if (!org) {
+  const organizationId = await authService.getOrganizationId(userId)
+  
+  if (!organizationId) {
     redirect('/dashboard')
   }
 
-  const purchases = await getPurchasesData(org.id)
+  // Fetch data for form
+  const accounts = await accountsService.getManagedAccounts(userId)
+  const programs = await programsService.getLoyaltyPrograms(userId)
+  const cards = await cardsService.getCards(userId)
+  const purchases = await purchasesService.getPurchases(userId)
 
   const totalSpent = purchases.reduce((sum, p) => sum + Number(p.total_cost_brl), 0)
   const totalMiles = purchases.reduce((sum, p) => sum + p.amount_miles, 0)
@@ -63,11 +30,18 @@ export default async function PurchasesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Histórico de Compras</h1>
-        <p className="text-muted-foreground">
-          Acompanhe todas as suas aquisições de milhas e pontos
-        </p>
+      <div className="flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-bold">Histórico de Compras</h1>
+          <p className="text-muted-foreground">
+            Acompanhe todas as suas aquisições de milhas e pontos
+          </p>
+        </div>
+        <AddPurchaseDialog 
+          accounts={accounts}
+          programs={programs}
+          cards={cards}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -110,66 +84,7 @@ export default async function PurchasesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data</TableHead>
-                <TableHead>Programa</TableHead>
-                <TableHead>Titular</TableHead>
-                <TableHead className="text-right">Milhas</TableHead>
-                <TableHead className="text-right">Valor Total</TableHead>
-                <TableHead className="text-right">CPM</TableHead>
-                <TableHead>Parcelas</TableHead>
-                <TableHead>Cartão</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {purchases.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                    Nenhuma compra registrada ainda
-                  </TableCell>
-                </TableRow>
-              ) : (
-                purchases.map((purchase) => (
-                  <TableRow key={purchase.id}>
-                    <TableCell className="font-medium">
-                      {formatDate(purchase.purchase_date)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={programColors[purchase.loyalty_programs?.program_type || ''] || 'bg-gray-100 text-gray-800'}>
-                        {purchase.loyalty_programs?.program_type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {purchase.managed_accounts?.name}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatNumber(purchase.amount_miles)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(Number(purchase.total_cost_brl))}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(Number(purchase.cost_per_thousand))}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      {purchase.installments > 1 ? (
-                        <Badge variant="outline">
-                          {purchase.installments}x {formatCurrency(Number(purchase.installment_amount))}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">À vista</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {purchase.credit_cards?.name || '-'}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <PurchasesTable purchases={purchases} />
         </CardContent>
       </Card>
 
@@ -206,4 +121,3 @@ export default async function PurchasesPage() {
     </div>
   )
 }
-

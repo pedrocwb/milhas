@@ -67,6 +67,18 @@ export class AuthService {
 
     return org
   }
+
+  async getOrganizationId(userId: string): Promise<string | null> {
+    const supabase = await this.getSupabaseClient()
+
+    const { data: org } = await supabase
+      .from('organizations')
+      .select('id')
+      .eq('owner_id', userId)
+      .single()
+
+    return org?.id || null
+  }
 }
 
 export const authService = new AuthService()

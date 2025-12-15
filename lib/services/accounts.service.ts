@@ -127,6 +127,11 @@ export class AccountsService {
     return accounts || []
   }
 
+  // Alias for consistency
+  async getManagedAccounts(userId: string) {
+    return this.getAccounts(userId)
+  }
+
   async getAccountById(userId: string, accountId: string) {
     const supabase = await this.getSupabaseClient()
     const organizationId = await this.getOrganizationId(userId)

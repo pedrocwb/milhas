@@ -164,6 +164,11 @@ export class ProgramsService {
     return programs || []
   }
 
+  // Alias for consistency
+  async getLoyaltyPrograms(userId: string) {
+    return this.getPrograms(userId)
+  }
+
   async getProgramById(userId: string, programId: string) {
     const supabase = await this.getSupabaseClient()
     const organizationId = await this.getOrganizationId(userId)

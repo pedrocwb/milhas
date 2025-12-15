@@ -1,66 +1,37 @@
-import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { formatCurrency, formatNumber, formatDate, calculateProfitMargin } from '@/lib/utils'
+import { formatCurrency, formatNumber } from '@/lib/utils'
 import { redirect } from 'next/navigation'
-import { CheckCircle, Clock, AlertCircle } from 'lucide-react'
-
-async function getSalesData(organizationId: string) {
-  const supabase = await createClient()
-
-  const { data: sales } = await supabase
-    .from('sales')
-    .select(`
-      *,
-      loyalty_programs (
-        program_type,
-        managed_accounts (
-          name
-        )
-      )
-    `)
-    .eq('organization_id', organizationId)
-    .order('sale_date', { ascending: false })
-    .limit(50)
-
-  return sales || []
-}
-
-const channelColors: Record<string, string> = {
-  HOTMILHAS: 'bg-orange-100 text-orange-800',
-  MAXMILHAS: 'bg-purple-100 text-purple-800',
-  DIRECT: 'bg-green-100 text-green-800',
-  OTHER: 'bg-gray-100 text-gray-800',
-}
-
-const programColors: Record<string, string> = {
-  LATAM: 'bg-red-100 text-red-800',
-  AZUL: 'bg-blue-100 text-blue-800',
-  SMILES: 'bg-yellow-100 text-yellow-800',
-  LIVELO: 'bg-purple-100 text-purple-800',
-}
+import { AlertCircle } from 'lucide-react'
+import { authService, programsService, salesService } from '@/lib/services'
+import { createClient } from '@/lib/supabase/server'
+import { AddSaleDialog } from './components/add-sale-dialog'
+import { SalesTable } from './components/sales-table'
 
 export default async function SalesPage() {
-  const supabase = await createClient()
+  const userId = await authService.getUserId()
   
-  const { data: { user } } = await supabase.auth.getUser()
-  
-  if (!user) {
+  if (!userId) {
     redirect('/login')
   }
 
-  const { data: org } = await supabase
-    .from('organizations')
-    .select('*')
-    .eq('owner_id', user.id)
-    .single()
-
-  if (!org) {
+  const organizationId = await authService.getOrganizationId(userId)
+  
+  if (!organizationId) {
     redirect('/dashboard')
   }
 
-  const sales = await getSalesData(org.id)
+  // Fetch data for form
+  const programs = await programsService.getLoyaltyPrograms(userId)
+  const sales = await salesService.getSales(userId)
+  
+  // Fetch beneficiaries for the dialog
+  const supabase = await createClient()
+  const { data: beneficiaries } = await supabase
+    .from('beneficiaries')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .eq('status', 'AVAILABLE')
 
   const totalRevenue = sales.reduce((sum, s) => sum + Number(s.amount_paid || 0), 0)
   const totalMilesSold = sales.reduce((sum, s) => sum + s.amount_miles, 0)
@@ -80,11 +51,17 @@ export default async function SalesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Histórico de Vendas</h1>
-        <p className="text-muted-foreground">
-          Acompanhe todas as suas vendas e recebimentos
-        </p>
+      <div className="flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-bold">Histórico de Vendas</h1>
+          <p className="text-muted-foreground">
+            Acompanhe todas as suas vendas e recebimentos
+          </p>
+        </div>
+        <AddSaleDialog 
+          programs={programs}
+          beneficiaries={beneficiaries || []}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -143,94 +120,7 @@ export default async function SalesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data</TableHead>
-                <TableHead>Programa</TableHead>
-                <TableHead>Canal</TableHead>
-                <TableHead className="text-right">Milhas</TableHead>
-                <TableHead className="text-right">Preço/1k</TableHead>
-                <TableHead className="text-right">Valor Total</TableHead>
-                <TableHead className="text-right">Recebido</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sales.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                    Nenhuma venda registrada ainda
-                  </TableCell>
-                </TableRow>
-              ) : (
-                sales.map((sale) => {
-                  const isPaid = !!sale.actual_payment_date
-                  const isOverdue = !isPaid && sale.expected_payment_date && 
-                    new Date(sale.expected_payment_date) < new Date()
-                  
-                  let statusBadge
-                  if (isPaid) {
-                    statusBadge = (
-                      <Badge variant="success" className="flex items-center gap-1 w-fit">
-                        <CheckCircle className="h-3 w-3" />
-                        Pago
-                      </Badge>
-                    )
-                  } else if (isOverdue) {
-                    statusBadge = (
-                      <Badge variant="destructive" className="flex items-center gap-1 w-fit">
-                        <AlertCircle className="h-3 w-3" />
-                        Atrasado
-                      </Badge>
-                    )
-                  } else {
-                    statusBadge = (
-                      <Badge variant="warning" className="flex items-center gap-1 w-fit">
-                        <Clock className="h-3 w-3" />
-                        Pendente
-                      </Badge>
-                    )
-                  }
-
-                  return (
-                    <TableRow key={sale.id}>
-                      <TableCell className="font-medium">
-                        {formatDate(sale.sale_date)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={programColors[sale.loyalty_programs?.program_type || ''] || 'bg-gray-100 text-gray-800'}>
-                          {sale.loyalty_programs?.program_type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={channelColors[sale.sale_channel] || channelColors.OTHER}>
-                          {sale.sale_channel}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {formatNumber(sale.amount_miles)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatCurrency(Number(sale.price_per_thousand))}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
-                        {formatCurrency(Number(sale.total_price_brl))}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {sale.amount_paid 
-                          ? formatCurrency(Number(sale.amount_paid))
-                          : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {statusBadge}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })
-              )}
-            </TableBody>
-          </Table>
+          <SalesTable sales={sales} />
         </CardContent>
       </Card>
 
@@ -292,4 +182,3 @@ function DollarSign({ className }: { className?: string }) {
     </svg>
   )
 }
-
